@@ -1,0 +1,11 @@
+data/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.dylib
+
+.DS_Store/
+.vscode/
+.ipynb_checkpoints/
