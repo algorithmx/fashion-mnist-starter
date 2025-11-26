@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 import matplotlib.pyplot as plt
 from dataset_loader import load_numpy
 
@@ -8,17 +9,43 @@ from dataset_loader import load_numpy
 #   to avoid PTX compilation warnings and fallback behavior. Users can override by
 #   setting the env var `FORCE_TF_GPU=1` to force GPU even if `ptxas` is missing.
 # - Respect an existing `CUDA_VISIBLE_DEVICES` setting (empty string disables GPUs).
+os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')  # Hide TF INFO logs by default
+
 force_gpu = os.environ.get('FORCE_TF_GPU', '0') == '1'
+gpu_disabled = False
+
 if os.environ.get('CUDA_VISIBLE_DEVICES', None) == '':
     # User has explicitly disabled GPUs; respect that
-    pass
+    gpu_disabled = True
 else:
     try:
         has_nvidia_smi = shutil.which('nvidia-smi') is not None
         has_ptxas = shutil.which('ptxas') is not None
-        if has_nvidia_smi and not has_ptxas and not force_gpu:
-            print("ptxas not found; disabling CUDA to avoid PTX compilation warnings. Set FORCE_TF_GPU=1 to override.")
-            os.environ['CUDA_VISIBLE_DEVICES'] = ''
+        gpu_unsupported = False
+        major = minor = 0
+        # Prefer disabling CUDA for older GPUs (compute capability < 7.0)
+        if has_nvidia_smi:
+            try:
+                out = subprocess.check_output([
+                    'nvidia-smi', '--query-gpu=compute_cap', '--format=csv,noheader'
+                ], text=True, stderr=subprocess.DEVNULL).strip().splitlines()
+                if out:
+                    first = out[0].strip()
+                    parts = first.split('.')
+                    major = int(parts[0]) if parts[0].isdigit() else 0
+                    minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+                    if major < 7:
+                        gpu_unsupported = True
+            except Exception:
+                # If query fails, don't assume unsupported
+                pass
+
+        # Disable CUDA if ptxas missing or GPU compute capability is unsupported
+        if (has_nvidia_smi and (not has_ptxas or gpu_unsupported)) and not force_gpu:
+            reason = 'ptxas not found' if not has_ptxas else f'GPU compute capability {major}.{minor} < 7.0'
+            print(f"{reason}; disabling CUDA to avoid PTX compilation warnings. Set FORCE_TF_GPU=1 to override.")
+            os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+            gpu_disabled = True
     except Exception:
         # If any check fails, don't change CUDA visibility (safe default)
         pass
@@ -28,16 +55,19 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
-# If GPUs are visible to TF, enable memory growth to avoid allocating all memory
+# Configure TF device visibility/memory use based on selector outcome
 try:
-    gpus = tf.config.list_physical_devices('GPU')
-    if gpus:
-        for g in gpus:
-            try:
-                tf.config.experimental.set_memory_growth(g, True)
-            except Exception:
-                # ignore failures (may be unsupported on some builds)
-                pass
+    if gpu_disabled:
+        tf.config.set_visible_devices([], 'GPU')
+    else:
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            for g in gpus:
+                try:
+                    tf.config.experimental.set_memory_growth(g, True)
+                except Exception:
+                    # ignore failures (may be unsupported on some builds)
+                    pass
 except Exception:
     pass
 
@@ -59,8 +89,6 @@ test_dataset = tf.data.Dataset.from_tensor_slices((x_test, y_test)).batch(64)
 class MinimalFashionCNN(keras.Model):
     def __init__(self):
         super(MinimalFashionCNN, self).__init__()
-        # Match PyTorch implementation exactly: conv -> ReLU -> maxpool -> flatten -> linear
-        # Conv2D without activation, then explicit ReLU layer
         self.conv1 = layers.Conv2D(16, kernel_size=3, padding='valid', activation=None)
         self.relu = layers.ReLU()
         self.pool = layers.MaxPooling2D(pool_size=(2, 2), strides=2)
