@@ -23,7 +23,7 @@ else:
         has_ptxas = shutil.which('ptxas') is not None
         gpu_unsupported = False
         major = minor = 0
-        # Prefer disabling CUDA for older GPUs (compute capability < 7.0)
+        # Prefer disabling CUDA for very old GPUs (compute capability < 6.0)
         if has_nvidia_smi:
             try:
                 out = subprocess.check_output([
@@ -34,7 +34,7 @@ else:
                     parts = first.split('.')
                     major = int(parts[0]) if parts[0].isdigit() else 0
                     minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-                    if major < 7:
+                    if major < 6:
                         gpu_unsupported = True
             except Exception:
                 # If query fails, don't assume unsupported
@@ -42,7 +42,7 @@ else:
 
         # Disable CUDA if ptxas missing or GPU compute capability is unsupported
         if (has_nvidia_smi and (not has_ptxas or gpu_unsupported)) and not force_gpu:
-            reason = 'ptxas not found' if not has_ptxas else f'GPU compute capability {major}.{minor} < 7.0'
+            reason = 'ptxas not found' if not has_ptxas else f'GPU compute capability {major}.{minor} < 6.0'
             print(f"{reason}; disabling CUDA to avoid PTX compilation warnings. Set FORCE_TF_GPU=1 to override.")
             os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
             gpu_disabled = True

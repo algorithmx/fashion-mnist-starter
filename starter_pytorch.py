@@ -55,8 +55,9 @@ if device.type == "cuda":
     try:
         props = torch.cuda.get_device_properties(0)
         major, minor = props.major, props.minor
-        if major < 7:
-            print(f"GPU compute capability {major}.{minor} is unsupported by this PyTorch build. Falling back to CPU.")
+    # Allow GPUs with compute capability >= 6 (Pascal and newer)
+        if major < 6:
+            print(f"GPU compute capability {major}.{minor} is likely too old. Falling back to CPU.")
             device = torch.device("cpu")
     except Exception:
         # If anything goes wrong querying properties, fall back to CPU
